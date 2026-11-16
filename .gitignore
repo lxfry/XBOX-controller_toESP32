@@ -1,0 +1,10 @@
+# ESP-IDF build output and downloaded dependencies
+/build/
+/managed_components/
+
+# Configuration backup (keep sdkconfig to preserve project settings)
+/sdkconfig.old
+
+# Machine-specific editor settings and caches
+/.vscode/
+/.cache/
