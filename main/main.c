@@ -25,6 +25,84 @@ static usb_device_handle_t active_xbox;         // Handle of the Xbox being read
 static bool xbox_disconnected;                  // Set to true when the active Xbox is unplugged.
 
 
+/////////////////////////////////// PRINT REPORT ///////////////////////////////////////
+static uint16_t read_u16_le(const uint8_t *bytes) {     // Read the header: bytes[0] and bytes[1] and reset it in order -> high bit first.  The *bytes contains the address of bytes
+    return (uint16_t)(bytes[0] | (bytes[1] << 8));      // XBOX report uses le (little-endian) order -> the low bit first.
+}
+
+
+static int read_stick_axis(const uint8_t *bytes) {
+    int value = read_u16_le(bytes);
+    return value >= 0x8000 ? value - 0x10000 : value;   // means if (value >= 0x8000) { return value - 0x10000;} else {return value;}   -0x10000 because signed
+}
+
+// Decode the fields we want to display and print one line to PuTTY.
+// The caller has already validated the report length and header.
+static void print_report(const uint8_t *report)
+{
+    static const struct {   // Structure of a button
+        const char *name;
+        uint16_t mask;
+    } 
+    
+    // Map each button bit mask to the name shown in PuTTY.
+    buttons[] = {
+        {"A",      0x0010}, {"B",      0x0020},
+        {"X",      0x0040}, {"Y",      0x0080},
+        {"Menu",   0x0004}, {"View",   0x0008},
+        {"Up",     0x0100}, {"Down",   0x0200},
+        {"Left",   0x0400}, {"Right",  0x0800},
+        {"LB",     0x1000}, {"RB",     0x2000},
+        {"LClick", 0x4000}, {"RClick", 0x8000}
+    };
+
+    // Report bytes 4 and 5 hold the button bitmask.
+    const uint16_t button_bits = read_u16_le(report + 4);
+
+    // Build a comma-separated list of pressed buttons.
+    char pressed[128] = {0};
+    size_t used = 0;    // Characters written, excluding the terminating '\0'.
+
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i) {
+        if ((button_bits & buttons[i].mask) == 0) {
+            continue;
+        }
+
+        int written = snprintf(
+            pressed + used,
+            sizeof(pressed) - used,
+            "%s%s",
+            used == 0 ? "" : ",",
+            buttons[i].name
+        );
+
+        if (written < 0) {
+            break;
+        }
+
+        if ((size_t)written >= sizeof(pressed) - used) {
+            break;
+        }
+
+        used += (size_t)written;
+    }
+
+    printf(
+        "Report=%u | LT=%u RT=%u | L=(%d,%d) R=(%d,%d) | Buttons=%s\n",
+        (unsigned)report[2],
+        (unsigned)read_u16_le(report + 6),
+        (unsigned)read_u16_le(report + 8),
+        read_stick_axis(report + 10),
+        read_stick_axis(report + 12),
+        read_stick_axis(report + 14),
+        read_stick_axis(report + 16),
+        pressed[0] != '\0' ? pressed : "none"
+    );
+}
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
 
 
 
@@ -155,10 +233,12 @@ static void read_xbox_packets(usb_host_client_handle_t client, usb_device_handle
                 break;
             }
 
-            // If the first byte identifies a GIP input report, print only
-            // the bytes that actually arrived.
-            if (input->actual_num_bytes > 0 && input->data_buffer[0] == 0x20) {
-                ESP_LOG_BUFFER_HEX("XBOX_IN", input->data_buffer, input->actual_num_bytes);
+            
+            // Decode only the 48-byte input report with header 20 00 <sequence> 2C.
+            const uint8_t *report = input->data_buffer;
+
+            if (input->actual_num_bytes == 48 && report[0] == 0x20 && report[1] == 0x00 && report[3] == 0x2C) {
+                print_report(report);
             }
 
 

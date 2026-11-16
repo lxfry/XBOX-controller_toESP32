@@ -1,10 +1,21 @@
 ﻿# Xbox controller to ESP32-S3
 
-Read a wired Xbox controller using the ESP32-S3 native USB Host and display its raw input packets over UART.
+Read a wired Xbox controller using the ESP32-S3 native USB Host and display its buttons, triggers, and joystick values over UART.
 
-The current `main/main.c` recognizes **VID `045E`, PID `0B12`**, sends three startup commands, and prints packets beginning with `20` under the `XBOX_IN` log tag. It uses interface 0 and endpoints `0x82` (IN) / `0x02` (OUT).
+The current `main/main.c` recognizes **VID `045E`, PID `0B12`**, sends three startup commands, and decodes **48-byte input reports with header `20 00 <sequence> 2C`**. It uses interface 0 and endpoints `0x82` (IN) / `0x02` (OUT). Reports with a different length or header are ignored.
 
-**This version prints hexadecimal packets; it does not decode buttons or axes.** ESP-NOW transmission to a second ESP32-S3 onboard a UAV is the next project stage and is not implemented here.
+Compared with the initial commit, raw `XBOX_IN` hexadecimal logging has been replaced by human-readable output from `print_report()`. ESP-NOW transmission to a second ESP32-S3 onboard a UAV is the next project stage and is not implemented here.
+
+Example output format (illustrative values):
+
+```text
+Report=42 | LT=0 RT=0 | L=(0,0) R=(0,0) | Buttons=A,LB
+```
+
+- `Report`: the report's sequence byte, not a total packet count.
+- `LT` / `RT`: unsigned 16-bit trigger values read in little-endian order.
+- `L=(X,Y)` / `R=(X,Y)`: signed 16-bit stick coordinates, from -32768 to 32767; no deadzone or normalization is applied.
+- `Buttons`: pressed A/B/X/Y, Menu/View, D-pad directions, LB/RB, or LClick/RClick; `none` when no mapped button is pressed.
 
 ## Hardware bench
 
@@ -54,17 +65,17 @@ To reproduce this setup, use the modified adapter/jumper and power the board thr
 2. Wait for `USB client ready. Plug in the controller.`
 3. Confirm the board's 5 V header-to-adapter VBUS jumper is connected, then connect the Xbox controller to native USB. The board supplies the controller's power through this jumper.
 4. Check that the console reports `VID=0x045E PID=0x0B12`. Other IDs will not enter packet capture.
-5. Press buttons, move both sticks, and squeeze/release both triggers. Look for changing hexadecimal packets tagged `XBOX_IN`. Named buttons and numeric axis values are not expected in this source version.
+5. Press and release each button and check its name in `Buttons`. Move both sticks and check `L`/`R`. Squeeze and release both triggers and check `LT`/`RT`, including slow releases to verify that the final value returns to zero. Test simultaneous inputs too; sticks may have small offsets at rest because no deadzone is applied.
 6. Enable PuTTY session logging to save the results. Record the controller model/firmware, cable/adapter, power wiring, and results alongside the capture.
 
-If no device appears, check the native USB connection, data cable, and VBUS supply. If the IDs appear but no packets follow, check the exact ID match and USB warnings. Close PuTTY before flashing again.
+If no device appears, check the native USB connection, data cable, and VBUS supply. If the IDs appear but no decoded lines follow, check the exact ID match, USB warnings, and the required 48-byte report format. Close PuTTY before flashing again.
 
 ## Test status and remaining issues
 
 - **Owner-confirmed:** project built and flashed; USB Host initialized; controller enumerated; input reports received.
-- **Earlier test history:** buttons, sticks, and triggers were decoded and tested in a version containing `print_report()`. That function and decoder are absent from the current `main.c`.
-- **Open issue:** slow trigger release sometimes left the last displayed value nonzero. A reporting revision was made historically, but the fix has not been confirmed. Retest with raw and decoded values together once the decoder is restored.
+- **Decoded inputs:** the owner previously reported physical tests of buttons, sticks, and triggers. The current source now contains `print_report()` and the decoder; this documentation update did not independently retest them.
+- **Open issue:** slow trigger release sometimes left the last displayed value nonzero. Resolution remains unconfirmed; repeat the slow-release test on this version and save the UART output.
 - **Unplug/replug:** cleanup is implemented, but reliable recovery has not been conclusively validated.
-- **Next steps:** reconcile/restore the decoder, confirm trigger release and reconnection, then implement ESP-NOW and receiver failsafe behavior before flight-controller integration.
+- **Next steps:** confirm decoded values, trigger release, and reconnection, then implement ESP-NOW and receiver failsafe behavior before flight-controller integration.
 
-Documentation reviewed on 16 November 2026. Existing build artifacts were inspected; no new build or hardware test was performed during documentation work.
+Documentation updated on 16 November 2026 by comparing the current code with initial commit `ed98efd`. No build or hardware test was performed for this update.
